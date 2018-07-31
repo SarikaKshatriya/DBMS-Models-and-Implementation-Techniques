@@ -1,1 +1,337 @@
+# Program to Simulates the behavior of 2phase locking protocol (rigorous 2PL) for concurrency control with
+#wait-die method for deadlock. 
+
+
+from flask import Flask,render_template,send_file,request
+import os
+import pymysql
+
+hostname = 'localhost'
+username = 'root'
+password = ''
+database = 'mysql'
+#establishes connection with Mysql
+myConn = pymysql.connect(host=hostname, user=username, passwd=password, db=database)
+
+globals
+#output file for storing the output of all transactions 
+op1 = os.path.dirname(__file__) + '/output.txt'
+
+app = Flask(__name__)
+app.debug=True
+
+#begin transaction function
+#If first character of the file content is ‘b’,this function gets called
+def begintrans(tid):
+    cur = myConn.cursor()
+    num = tid
+    tran=num
+    params = (tran)
+    text_file1.write("\n")
+    text_file1.write("\n")
+    text_file1.write("Command: b"+tid+"\n")
+    text_file1.write("Beginning of Transaction: "+num + "\n")
+    #calls Mysql procedure -insertdata, this procedure 
+    #checks if any records exist for the TransactionId in sys_transaction table.
+    #If the record count is 0, then insert record in sys_transaction table with the
+    #TransactionId, default state as ‘Active’ and Timestamp as 1 for the first record.
+    #Subsequently, the timestamp gets incremented for further inserts.
+    cur.callproc('art.insertdata', params)
+    myConn.commit()
+    #writes transaction table to output file
+    text_file1.write("Transaction Table"+"\n")
+    query1 = "SELECT Tid,Tstamp, Tstate,T_items_held from art.sys_transaction where Tid='"+str(num)+"'"
+    cur.execute(query1)
+    data = cur.fetchall()
+    text_file1.write("Tid    Tstamp    Tstate     T_items_held\n")
+    for row in data:
+        text_file1.write(
+            "" + str(row[0]) + "         " + str(row[1]) + "        " + str(row[2]) + "      " + str(row[3]))
+        text_file1.write("\n ")
+    #writes lock table to output file
+    text_file1.write("Lock Table" + "\n")
+    text_file1.write("Item_name     Lock_state       Lock_holding_tid       Lock_waiting_tid\n")
+    for row in data:
+        text_file1.write(str(row[0]) + "          " + str(row[1]) + "            " + str(row[2]) + "         " + str(row[3]))
+        text_file1.write("\n ")
+     
+    return
+
+#commit transaction function
+#If first character of the file content is ‘c’,this function gets called
+def committran(tid):
+    print tid
+    if(tid!=' '):
+        cur = myConn.cursor()
+        num = tid
+        tran = num
+        params = (tran)
+        text_file1.write("\n")
+        text_file1.write("\n")
+        text_file1.write("Command: e" + tid + "\n")
+        text_file1.write("Commiting of Transaction: " + num + "\n")
+        #calls Mysql procedure - commit
+        #checks lock_state of the ending transaction. If Lock_state is ‘read lock’, then release the locks held for the data item by the transaction.
+        #If the lock_state is write lock, then dataitem is assigned to first waiting transaction and update the transaction table with Tstate as “Committed”
+        #All locks on the data item of the transaction gets released or unlocked after committing or ending the transaction.
+        cur.callproc('art.commit', params)
+        myConn.commit()
+        #writes transaction table to output file
+        text_file1.write("Transaction Table" + "\n")
+        query1 = "SELECT Tid,Tstamp, Tstate,T_items_held from art.sys_transaction where Tid='" + str(num) + "'"
+        cur.execute(query1)
+        data = cur.fetchall()
+        text_file1.write("Tid    Tstamp    Tstate     T_items_held\n")
+        for row in data:
+            text_file1.write(
+                "" + str(row[0]) + "     " + str(row[1]) + "     " + str(row[2]) + "     " + str(row[3]))
+            text_file1.write("\n ")
+        #writes lock table to output file
+        text_file1.write("Lock Table" + "\n")
+        text_file1.write("Item_name     Lock_state       Lock_holding_tid       Lock_waiting_tid\n")
+        for row in data:
+            text_file1.write(str(row[0]) + "          " + str(row[1]) + "            " + str(row[2]) + "         " + str(row[3]))
+            text_file1.write("\n ")
+        return
+
+
+#write transaction function
+##If first character of the file content is ‘w’,this function gets called.
+def writetran(tid, dataitem):
+    cur = myConn.cursor()
+    num = tid
+    tran = num
+    result = ''
+    params = (tran, str(dataitem))
+    #calls Mysql procedure -writetran
+    #checks if any records exist in write lock mode for the requested dataitem in sys_lock table
+    #If record count is 0 and transaction state is “Active”, then insert records in sys_lock table, with the lock state as writelock (WL) for the dataitem.
+    #if record count is greater than 0,calls wait die function
+    cur.callproc('art.writetran', params)
+    myConn.commit()
+    result_args = cur.fetchone()
+    if (result_args != None):
+       if (result_args[0] == 'Waitdie'):
+            #calls Mysql procedure - waitdie
+            waitdie(tid, dataitem, 'WL')
+            return
+    query1 = "SELECT Item_name,Lock_state, Lock_Holding_tid,Lock_Waiting_tid from art.sys_Lock where Lock_Holding_tid  like '%" + str(
+        num) + "%' and Item_name IN ('" + dataitem + "')"
+    cur.execute(query1)
+    data = cur.fetchall()
+    text_file1.write("\n")
+    text_file1.write("\n")
+    text_file1.write("Command: w"+tid + " "+ dataitem+"\n")
+    #writes lock table to output file
+    text_file1.write("Lock Table" + "\n")
+    text_file1.write("Item_name     Lock_state       Lock_holding_tid       Lock_waiting_tid\n")
+    for row in data:
+        text_file1.write(str(row[0]) + "                " + str(row[1]) + "              " + str(row[2]) + "           " + str(row[3]))
+        text_file1.write("\n")
+     
+    query1 = "SELECT Tid,Tstamp, Tstate,T_items_held from art.sys_transaction where Tid='" + str(num) + "'"
+    cur.execute(query1)
+    #writes transaction table to output file
+    text_file1.write("Transaction Table after Write lock" + "\n")
+    data = cur.fetchall()
+    text_file1.write("Tid    Tstamp    Tstate     T_items_held\n")
+    for row in data:
+        text_file1.write(
+            "" + str(row[0]) + "             " + str(row[1]) + "              " + str(row[2]) + "                  " + str(row[3]))
+        text_file1.write("\n ")
+    return
+
+#waitdie transaction function
+def waitdie(tid,dataitem,lstate):
+    cur = myConn.cursor()
+    num = tid
+    tran = num
+    params=(tid,dataitem,lstate)
+    #calls Mysql procedure - waitdie,this procedure checks
+    #If timestamp of locking transaction id is lesser than requesting transaction id then update the state of requesting Tid in sys_transaction table as “Aborted”. 
+    #If timestamp of locking transaction id is greater than the timestamp of requesting transaction id, then update the state of requesting Tid in sys_transaction table as “Waiting”
+    #And add the lock table Lock_waiting_tid with requesting transaction id.
+    cur.callproc('art.waitdie', params)
+    text_file1.write("Called wait die\n")
+    myConn.commit()
+    return
+
+#read transaction function
+##If first character of the file content is ‘r’,this function gets called.
+def readtran(tid,dataitem):
+    cur = myConn.cursor()
+    num = tid
+    tran = num
+    result=''
+    params = (tran,str(dataitem))
+    #calls Mysql procedure - readtran, this procedure 
+    #checks if any records exist in read lock mode for the dataitem and TransactionId in sys_lock table
+    #If the count=0 and if the Tstate is Active in sys_transaction table, then insert records in sys_lock table,
+    #with the lock state as readlock (RL) for the dataitem and Lock_holding_tid. Update the dataitem in T_items_held in sys_transaction table.
+    #count is >0, then update the lock table Lock_holding_tid and update the dataitem in T_items_held in sys_transaction table.
+    cur.callproc('art.readtran', params)
+    myConn.commit()
+    result_args=cur.fetchone()
+    if(result_args!=None):
+      
+      if(result_args[0]=='Waitdie'):
+          #calls waitdie function
+          waitdie(tid,dataitem,'RL')
+          return
+    text_file1.write("\n")
+    text_file1.write("\n")
+    text_file1.write("Command: r" + tid + " " +dataitem+ "\n")
+    query1 = "SELECT Item_name,Lock_state, Lock_Holding_tid,Lock_Waiting_tid from art.sys_Lock where Lock_Holding_tid  like '%"+str(num)+"%' and Item_name IN ('"+dataitem+"')"
+    cur.execute(query1)
+    data = cur.fetchall()
+    #writes lock table to output file
+    text_file1.write("Lock Table" + "\n")
+    text_file1.write("Item_name     Lock_state       Lock_holding_tid       Lock_waiting_tid\n")
+    for row in data:
+        text_file1.write(str(row[0]) + "          " + str(row[1]) + "            " + str(row[2]) + "         " + str(row[3]))
+        text_file1.write("\n ")
+    query1 = "SELECT Tid,Tstamp, Tstate,T_items_held from art.sys_transaction where Tid='"+str(num)+"'"
+    cur.execute(query1)
+    #writes transaction table to output file
+    text_file1.write("Transaction Table after Read lock" + "\n")
+    data = cur.fetchall()
+    text_file1.write("Tid    Tstamp    Tstate     T_items_held\n")
+    for row in data:
+        text_file1.write(
+            "" + str(row[0]) + "         " + str(row[1]) + "         " + str(row[2]) + "         " + str(row[3]))
+        text_file1.write("\n ")
+
+    return
+
+
+
+@app.route('/', methods=['GET', 'POST'])
+def hello_world():
+    cur = myConn.cursor()
+    #deletes sys_transaction if it's already exists
+    query1 = "delete from art.sys_transaction"
+    cur.execute(query1)
+    #deletes sys_lock if it's already exists
+    query2 = "delete from art.sys_lock"
+    cur.execute(query2)
+    return render_template("index.html");
+
+
+@app.route('/input1', methods=['GET', 'POST'])
+def input1():
+     
+    userfile=''
+    global user_file
+    #takes input file 1 for processing
+    if(request.form['f1']=='file1'):
+      userfile = os.path.dirname(__file__) + '/input1.txt'
+    #takes input file 2 for processing
+    if (request.form['f1'] == 'file2'):
+         userfile = os.path.dirname(__file__) + '/input2.txt'
+    #takes input file 3 for processing
+    if (request.form['f1'] == 'file3'):
+         userfile = os.path.dirname(__file__) + '/input3.txt'
+    #takes input file 4 for processing
+    if (request.form['f1'] == 'file4'):
+         userfile = os.path.dirname(__file__) + '/input4.txt'
+    #takes input file 5 for processing
+    if (request.form['f1'] == 'file5'):
+         userfile = os.path.dirname(__file__) + '/input5.txt'
+       
+    global text_file1
+    text_file1 = open(op1, "w")
+    text_file1.write("Output for Input file:" + "\n")
+    cur = myConn.cursor()
+    #deletes sys_transaction if it's already exists
+    query1 = "delete from art.sys_transaction"
+    cur.execute(query1)
+    #deletes sys_lock if it's already exists
+    query2 = "delete from art.sys_lock"
+    cur.execute(query2)
+    ttype = 'a'
+
+    #opens the input file and reads the input line by line and then for each line,reads it by each charachter
+    # Based on the contents or the character encountered, the corresponding function is executed and the summary is printed in output file.
+    file = open(userfile, 'r')
+    for line in file.readlines():
+        if (len(line) <= 5):
+            for c in line:
+                #checks for the charachters of the line if the charachter is ';' then its end of the line.
+                if (c == ";"):
+                    break;
+                if (c == 'b'):
+                    ttype = c
+                    
+                if (c == 'e'):
+                    ttype = c
+                   
+                else:
+                    if (c < "9" and ttype == 'b'):#if the charachter is 'b' then calls begintrans function
+                        begintrans(c)
+                        break;
+                    if (c < "9" and ttype == 'e'):#if the charachter is 'c' then calls committran function
+                        committran(c)
+                        
+                        break;
+
+
+        else:
+
+            itemlist = []
+            dataitem = []
+            tval = "0"
+            for c in line:
+                if (c == ";"):
+                    break;
+                if (c == 'r'):#if the charachter is 'r' then calls readtran function
+                   
+                    ttype = c
+                    itemlist = line.strip().split('(')
+                    for i in itemlist[0]:
+                        if (i < "9" and i != ' '):
+                            tval = i #takes input as a dataitem
+                    dataitem = itemlist[1].strip().split(')')
+                    #calls readtran function
+                    readtran(tval,dataitem[0])
+                    break;
+                if (c == 'w'):#if the charachter is 'w' then calls writetran function
+                    ttype = c
+                    itemlist = line.strip().split('(')
+                    for i in itemlist[0]:
+                        if (i < "9" and i != ' '):
+                            tval = i #takes input as a dataitem
+                    dataitem = itemlist[1].strip().split(')')
+                    #calls Write tran function
+                    writetran(tval, dataitem[0])
+                    break;
+    #writes final output to output file
+    text_file1.write("\n")
+    text_file1.write("\n")
+    text_file1.write("Final Output"+"\n")
+    cur = myConn.cursor()
+    query1 = "SELECT Tid,Tstamp, Tstate,T_items_held from art.sys_transaction"
+    cur.execute(query1)
+    #writes transaction table to output file
+    text_file1.write("Transaction Table" + "\n")
+    data = cur.fetchall()
+    text_file1.write("Tid    Tstamp    Tstate     T_items_held\n")
+    for row in data:
+         text_file1.write(
+             "" + str(row[0]) + "         " + str(row[1]) + "        " + str(row[2]) + "         " + str(row[3]))
+         text_file1.write("\n")
+    file.close()
+    text_file1.close()
+
+    return send_file(op1,
+                     attachment_filename='output.txt',as_attachment=True, mimetype='text/plain')
+
+
+@app.route('/output1', methods=['GET', 'POST'])
+def output1():
+       return send_file(op1,
+                     attachment_filename='output.txt')
+
+
+if __name__ == '__main__':
+    app.run()
 
